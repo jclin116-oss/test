@@ -3,6 +3,11 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
+# 引入 urllib3 用來消除 SSL 警告訊息
+import urllib3
+
+# 關閉不安全請求的警告（因為設定了 verify=False）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 設定網頁標題與佈局
 st.set_page_config(page_title="總統府行程爬蟲工具", layout="wide")
@@ -36,20 +41,19 @@ def parse_schedule_by_single_date(scraped_date):
     }
 
     try:
-        res = requests.get(base_url, headers=headers, timeout=15)
+        # 加入 verify=False 繞過 SSL 憑證錯誤
+        res = requests.get(base_url, headers=headers, timeout=15, verify=False)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # 找到網頁中的行程區塊（以總統府當前 DOM 結構為準）
-            # 官網結構通常一個日期包覆一個區塊 (例如 class 為 .day_box)
+            # 找到網頁中的行程區塊
             day_boxes = soup.select(".day_box")
             
             for box in day_boxes:
                 # 取得日期與星期文字
-                date_text = box.select_one(".date").get_text(strip=True) if box.select_one(".date") else date_str
                 week_text = box.select_one(".week").get_text(strip=True) if box.select_one(".week") else ""
                 
-                # 撈取對象與內容（通常以 table 或 dl/dd 結構呈現）
+                # 撈取對象與內容
                 rows = box.select("tr")
                 if rows:
                     for row in rows:
@@ -71,7 +75,7 @@ def parse_schedule_by_single_date(scraped_date):
         for r in ["總統", "副總統", "總統府"]:
             all_data.append({
                 "日期": date_str,
-                "星期": scraped_date.strftime("%A"),
+                "星期": "",
                 "對象": r,
                 "行程內容": "無公開行程"
             })
