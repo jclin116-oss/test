@@ -3,10 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
-# 引入 urllib3 用來消除 SSL 警告訊息
 import urllib3
 
-# 關閉不安全請求的警告（因為設定了 verify=False）
+# 關閉不安全請求的警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 設定網頁標題與佈局
@@ -28,12 +27,12 @@ target_date = st.sidebar.date_input("選擇特定日期", datetime.today())
 
 def parse_schedule_by_single_date(scraped_date):
     """
-    將特定日期帶入總統府官網參數進行精準請求，並解析 HTML 結構
+    修正官網參數與 DOM 解析結構
     """
     date_str = scraped_date.strftime("%Y-%m-%d")
     
-    # 起訖日期皆設定為同一天
-    base_url = f"https://www.president.gov.tw/Page/37?id_start={date_str}&id_end={date_str}"
+    # 修正：官網實際日期參數為 FDate 與 EDate
+    base_url = f"https://www.president.gov.tw/Page/37?FDate={date_str}&EDate={date_str}"
     all_data = []
     
     headers = {
@@ -41,38 +40,52 @@ def parse_schedule_by_single_date(scraped_date):
     }
 
     try:
-        # 加入 verify=False 繞過 SSL 憑證錯誤
         res = requests.get(base_url, headers=headers, timeout=15, verify=False)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # 找到網頁中的行程區塊
-            day_boxes = soup.select(".day_box")
-            
-            for box in day_boxes:
-                # 取得日期與星期文字
-                week_text = box.select_one(".week").get_text(strip=True) if box.select_one(".week") else ""
+            # 官網結構：行程區塊包在 class="list_type" 或 .page_content 內
+            # 每一天的行程是以帶有日期的元素為核心，底下會有對象群組
+            content_div = soup.select_one(".page_content")
+            if content_div:
+                current_role = None
+                current_week = ""
                 
-                # 撈取對象與內容
-                rows = box.select("tr")
-                if rows:
-                    for row in rows:
-                        cols = row.find_all(["td", "th"])
-                        if len(cols) >= 2:
-                            role = cols[0].get_text(strip=True)
-                            content = cols[1].get_text(strip=True)
-                            all_data.append({
-                                "日期": date_str,
-                                "星期": week_text,
-                                "對象": role,
-                                "行程內容": content
-                            })
+                # 遍歷內文節點
+                for child in content_div.descendants:
+                    if child.name == "h2" and "年" in child.get_text():
+                        # 日期標題 (例如: 115年 6月 23日)
+                        current_week = ""
+                        week_span = child.find_next("span")
+                        if week_span:
+                            current_week = week_span.get_text(strip=True)
+                            
+                    elif child.name == "h3":
+                        # 身份對象標題 (例如: 總統、副總統、總統府)
+                        current_role = child.get_text(strip=True)
+                        
+                    elif child.name == "ul" and current_role:
+                        # 行程內容清單
+                        lis = child.find_all("li")
+                        for li in lis:
+                            # 移除內部可能存在的新聞連結文字，只取純行程內文
+                            text_content = li.get_text(" ", strip=True)
+                            
+                            # 檢查是否重複加入
+                            if not any(d['行程內容'] == text_content and d['對象'] == current_role for d in all_data):
+                                all_data.append({
+                                    "日期": date_str,
+                                    "星期": current_week,
+                                    "對象": current_role,
+                                    "行程內容": text_content
+                                })
     except Exception as e:
         st.error(f"連線或解析官網時發生錯誤: {e}")
 
-    # 防呆機制：若當天官網無資料或結構解析不到，則自動提供無行程預設值
-    if not all_data:
-        for r in ["總統", "副總統", "總統府"]:
+    # 若官網該對象沒資料，則補齊預設值「無公開行程」
+    roles_found = [d["對象"] for d in all_data]
+    for r in ["總統", "副總統", "總統府"]:
+        if r not in roles_found:
             all_data.append({
                 "日期": date_str,
                 "星期": "",
@@ -96,7 +109,7 @@ if st.sidebar.button("開始同步並篩選資料"):
                 df = df[df["對象"].isin(target_role)]
             
             if not df.empty:
-                # 2. 定義官階排序權重（總統 -> 副總統 -> 總統府）
+                # 2. 定義官階排序權重
                 role_mapping = {"總統": 1, "副總統": 2, "總統府": 3}
                 df["官階權重"] = df["對象"].map(role_mapping)
                 
@@ -106,7 +119,7 @@ if st.sidebar.button("開始同步並篩選資料"):
                 # 4. 清洗最終顯示欄位
                 display_df = df[["日期", "星期", "對象", "行程內容"]].reset_index(drop=True)
                 
-                st.success(f"查詢成功！已找到 {target_date} 共 {len(display_df)} 筆對應行程。")
+                st.success(f"查詢成功！已找到 {target_date} 相關行程。")
                 
                 # 5. 顯示純文字表格
                 st.dataframe(display_df, use_container_width=True)
