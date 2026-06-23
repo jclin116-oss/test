@@ -17,7 +17,7 @@ target_date = st.sidebar.date_input("選擇日期", datetime.today())
 
 def get_raw_text(scraped_date):
     """
-    不進行任何解析切分，直接回傳該區塊的純文字內容（已修正 utf-8 編碼）
+    完全不設定 class 限制，直接撈取整個 body 的純文字（已修正 utf-8 編碼）
     """
     date_str = scraped_date.strftime("%Y-%m-%d")
     base_url = f"https://www.president.gov.tw/Page/37?FDate={date_str}&EDate={date_str}"
@@ -30,14 +30,15 @@ def get_raw_text(scraped_date):
     try:
         res = requests.get(base_url, headers=headers, timeout=15, verify=False)
         if res.status_code == 200:
-            res.encoding = 'utf-8'  # 強制指定編碼，解決先前的亂碼問題
+            res.encoding = 'utf-8'  # 強制指定編碼，解決之前的亂碼問題
             soup = BeautifulSoup(res.text, "html.parser")
             
-            content_div = soup.select_one(".page_content")
-            if content_div:
-                return content_div.get_text(separator="\n", strip=True)
+            # 直接抓取整個 body 區塊
+            body = soup.find("body")
+            if body:
+                return body.get_text(separator="\n", strip=True)
             else:
-                return "成功連線，但網頁中找不到 class='page_content' 的區塊。"
+                return "成功連線，但網頁中找不到 <body> 標籤。"
         else:
             return f"連線失敗，伺服器回應狀態碼: {res.status_code}"
     except Exception as e:
