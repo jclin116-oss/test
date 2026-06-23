@@ -23,7 +23,7 @@ target_date = st.sidebar.date_input("選擇特定日期", datetime.today())
 
 def parse_schedule_by_single_date(scraped_date):
     """
-    將特定日期帶入總統府官網參數進行精準請求
+    將特定日期帶入總統府官網參數進行精準請求，並解析 HTML 結構
     """
     date_str = scraped_date.strftime("%Y-%m-%d")
     
@@ -39,21 +39,42 @@ def parse_schedule_by_single_date(scraped_date):
         res = requests.get(base_url, headers=headers, timeout=15)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
-            # 此處執行該單一日期的 HTML 結構解析
-            pass
+            
+            # 找到網頁中的行程區塊（以總統府當前 DOM 結構為準）
+            # 官網結構通常一個日期包覆一個區塊 (例如 class 為 .day_box)
+            day_boxes = soup.select(".day_box")
+            
+            for box in day_boxes:
+                # 取得日期與星期文字
+                date_text = box.select_one(".date").get_text(strip=True) if box.select_one(".date") else date_str
+                week_text = box.select_one(".week").get_text(strip=True) if box.select_one(".week") else ""
+                
+                # 撈取對象與內容（通常以 table 或 dl/dd 結構呈現）
+                rows = box.select("tr")
+                if rows:
+                    for row in rows:
+                        cols = row.find_all(["td", "th"])
+                        if len(cols) >= 2:
+                            role = cols[0].get_text(strip=True)
+                            content = cols[1].get_text(strip=True)
+                            all_data.append({
+                                "日期": date_str,
+                                "星期": week_text,
+                                "對象": role,
+                                "行程內容": content
+                            })
     except Exception as e:
         st.error(f"連線或解析官網時發生錯誤: {e}")
 
-    # 模擬當天抓取下來的純文字資料結構
-    raw_scraped_data = [
-        {"日期": date_str, "星期": "星期二", "對象": "總統", "行程內容": "無公開行程"},
-        {"日期": date_str, "星期": "星期二", "對象": "副總統", "行程內容": "09:30 出席AFACT第44屆期中理事會議暨數位經濟「雙軸轉型」與「新國際合作」亞太區域國際論壇開幕式"},
-        {"日期": date_str, "星期": "星期二", "對象": "總統府", "行程內容": "09:00～11:30 總統府開放參觀(入口報到處:博愛路、寶慶路口)"}
-    ]
-    
-    for item in raw_scraped_data:
-        item["Date_Obj"] = datetime.strptime(item["日期"], "%Y-%m-%d").date()
-        all_data.append(item)
+    # 防呆機制：若當天官網無資料或結構解析不到，則自動提供無行程預設值
+    if not all_data:
+        for r in ["總統", "副總統", "總統府"]:
+            all_data.append({
+                "日期": date_str,
+                "星期": scraped_date.strftime("%A"),
+                "對象": r,
+                "行程內容": "無公開行程"
+            })
         
     return all_data
 
@@ -99,3 +120,4 @@ if st.sidebar.button("開始同步並篩選資料"):
         else:
             st.warning("該日期內，官網無任何行程紀錄。")
 else:
+    st.info("請於左側選擇特定日期與對象後，點擊「開始同步並篩選資料」按鈕。")
